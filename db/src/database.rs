@@ -60,6 +60,7 @@ impl MigrationSource<'static> for PgMigrations {
                 "init database".into(),
                 MigrationType::ReversibleUp,
                 sql_0001.into(),
+                false,
             );
 
             Ok(vec![migration_0001])

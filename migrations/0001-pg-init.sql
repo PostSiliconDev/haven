@@ -27,8 +27,8 @@ CREATE INDEX idx_proxy_set ON proxy(set);
 -- Rule table
 CREATE TABLE rule (
     id SERIAL PRIMARY KEY,
-    mode TEXT,
-    value TEXT,
+    mode TEXT NOT NULL,
+    value TEXT NOT NULL,
     set TEXT,
     create_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     update_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -40,8 +40,8 @@ CREATE INDEX idx_rule_set ON rule(set);
 -- Match table
 CREATE TABLE match (
     id SERIAL PRIMARY KEY,
-    proxy_set TEXT,
-    rule_set TEXT,
+    proxy_set TEXT NOT NULL,
+    rule_set TEXT NOT NULL,
     create_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     update_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -50,17 +50,18 @@ CREATE INDEX idx_match_proxy_set ON match(proxy_set);
 CREATE INDEX idx_match_rule_set ON match(rule_set);
 
 -- DNS Record table
-CREATE TABLE dns_record (
+CREATE TABLE record (
     id SERIAL PRIMARY KEY,
-    domain TEXT,
-    type TEXT,
-    value TEXT,
+    domain TEXT NOT NULL,
+    type TEXT NOT NULL,
+    record TEXT NOT NULL,
+    ttl INTEGER,
     create_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     update_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_dns_record_domain ON dns_record(domain);
-CREATE INDEX idx_dns_record_type ON dns_record(type);
+CREATE INDEX idx_record_domain ON record(domain);
+CREATE INDEX idx_record_type ON record(type);
 
 -- Host table
 CREATE TABLE host (
@@ -111,8 +112,8 @@ CREATE TRIGGER update_match_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_dns_record_updated_at
-    BEFORE UPDATE ON dns_record
+CREATE TRIGGER update_record_updated_at
+    BEFORE UPDATE ON record
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 

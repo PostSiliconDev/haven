@@ -20,3 +20,9 @@ anyhow = "1.0"
 
 haven-dns = { path = "dns" }
 haven-db = { path = "db" }
+
+sqlx = { version = "0.8.6", features = [
+    "runtime-tokio",
+    "postgres",
+    "tls-rustls",
+] }

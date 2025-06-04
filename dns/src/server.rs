@@ -1,21 +1,20 @@
-use crate::config::{NameServer, UpstreamConfig};
 use anyhow::Result;
-use futures::future::select_all;
+use haven_db::Database;
 use hickory_proto::op::Message;
 use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
-use reqwest::Client;
-use std::net::SocketAddr;
 use tokio::net::UdpSocket;
 
-pub struct DNSServer {
+use crate::config::{NameServer, UpstreamConfig};
+use crate::query::QueryHandler;
+
+pub struct DNSServer<'a> {
     listener: UdpSocket,
-    udp_upstreams: Vec<SocketAddr>,
-    doh_upstreams: Vec<String>,
-    client: Client,
+    query_handler: QueryHandler,
+    database: &'a Database,
 }
 
-impl DNSServer {
-    pub async fn new(config: UpstreamConfig) -> Result<Self> {
+impl<'a> DNSServer<'a> {
+    pub async fn new(config: UpstreamConfig, database: &'a Database) -> Result<Self> {
         let listener = UdpSocket::bind(config.listen).await?;
 
         let mut udp_upstreams = Vec::new();
@@ -28,59 +27,13 @@ impl DNSServer {
             }
         }
 
-        let client = Client::new();
+        let query_handler = QueryHandler::new(udp_upstreams, doh_upstreams);
 
         Ok(Self {
             listener,
-            udp_upstreams,
-            doh_upstreams,
-            client,
+            query_handler,
+            database,
         })
-    }
-
-    async fn query_upstreams(&self, request: Message) -> Result<Vec<u8>> {
-        // Create futures for UDP requests
-        let mut udp_futures = Vec::new();
-        for upstream in &self.udp_upstreams {
-            let socket = UdpSocket::bind("0.0.0.0:0").await?;
-            let request = request.clone();
-            let upstream = *upstream;
-            udp_futures.push(tokio::spawn(async move {
-                let mut response_buf = [0u8; 512];
-                socket.send_to(&request.to_bytes()?, upstream).await?;
-                let (size, _) = socket.recv_from(&mut response_buf).await?;
-                Ok::<_, anyhow::Error>(response_buf[..size].to_vec())
-            }));
-        }
-
-        // Create futures for DoH requests
-        let mut doh_futures = Vec::new();
-        for upstream in &self.doh_upstreams {
-            let client = self.client.clone();
-            let request = request.clone();
-            let upstream = upstream.clone();
-            doh_futures.push(tokio::spawn(async move {
-                let response = client
-                    .post(upstream)
-                    .body(request.to_bytes()?)
-                    .send()
-                    .await?
-                    .bytes()
-                    .await?;
-                Ok::<_, anyhow::Error>(response.to_vec())
-            }));
-        }
-
-        // Combine all futures
-        let mut all_futures = Vec::new();
-        all_futures.extend(udp_futures);
-        all_futures.extend(doh_futures);
-
-        let (result, _, _) = select_all(all_futures).await;
-
-        let res = result??;
-
-        Ok(res)
     }
 
     async fn handle_query(&self, buf: &mut [u8]) -> Result<()> {
@@ -88,7 +41,21 @@ impl DNSServer {
         log::debug!("Received {} bytes from {}", size, src);
 
         let request = Message::from_bytes(&buf[..size])?;
-        let response = self.query_upstreams(request).await?;
+
+        // Try to resolve from local database first
+        if let Some(response) = self
+            .query_handler
+            .query_local(request.clone(), self.database)
+            .await?
+        {
+            self.listener.send_to(&response.to_bytes()?, src).await?;
+            return Ok(());
+        }
+
+        log::debug!("No local record found, querying upstream servers");
+
+        // Fall back to upstream servers if local resolution fails
+        let response = self.query_handler.query_upstreams(request).await?;
         self.listener.send_to(&response, src).await?;
 
         Ok(())
