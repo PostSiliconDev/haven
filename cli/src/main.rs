@@ -1,25 +1,29 @@
-use haven_dns::{config::UpstreamConfig, server::DNSServer};
+use anyhow::Result;
+use haven_dns::server::DNSServer;
 use log::info;
-use std::net::SocketAddr;
+
+mod config;
+use config::Config;
+
+async fn run_server(config: Config) -> Result<()> {
+    // 创建并运行服务器
+    let server = DNSServer::new(config.dns).await?;
+    info!("Starting Haven DNS server...");
+    server.run().await?;
+    Ok(())
+}
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     // 初始化日志
     env_logger::init();
 
-    // 创建配置
-    let config = UpstreamConfig {
-        listen: SocketAddr::from(([127, 0, 0, 1], 5353)),
-        upstream_nameservers: vec![
-            haven_dns::config::NameServer::Udp(SocketAddr::from(([8, 8, 8, 8], 53))),
-            haven_dns::config::NameServer::Doh("https://dns.google/dns-query".to_string()),
-        ],
-    };
+    // 加载配置
+    let config = Config::load("config.toml")?;
+    info!("Loaded configuration from config.toml");
 
-    // 创建并运行服务器
-    let server = DNSServer::new(config).await?;
-    info!("Starting Haven DNS server...");
-    server.run().await?;
+    // 运行服务器
+    run_server(config).await?;
 
     Ok(())
 }

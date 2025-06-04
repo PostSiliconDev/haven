@@ -1,7 +1,6 @@
 use std::{future::Future, pin::Pin};
 
 use anyhow::Result;
-use async_trait::async_trait;
 use redis::Client as RedisClient;
 use sqlx::{
     migrate::{Migration, MigrationSource, MigrationType, Migrator},

@@ -1,0 +1,10 @@
+[dns]
+listen = "127.0.0.1:5353"
+upstream_nameservers = [
+    { type = "udp", value = "8.8.8.8:53" },
+    { type = "doh", value = "https://dns.google/dns-query" },
+]
+
+[database]
+postgres_url = "postgres://postgres:postgres@localhost:5432/haven"
+redis_url = "redis://localhost:6379"

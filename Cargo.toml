@@ -19,4 +19,4 @@ futures = "0.3"
 anyhow = "1.0"
 
 haven-dns = { path = "dns" }
-async-trait = "0.1"
+haven-db = { path = "db" }
