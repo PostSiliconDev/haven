@@ -12,3 +12,5 @@ tokio.workspace = true
 reqwest.workspace = true
 hickory-proto.workspace = true
 log.workspace = true
+futures.workspace = true
+anyhow.workspace = true
