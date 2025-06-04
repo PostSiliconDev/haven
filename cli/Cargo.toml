@@ -1,0 +1,13 @@
+[package]
+name = "haven"
+description = "Haven DNS CLI"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+haven-dns = { path = "../haven-dns" }
+tokio.workspace = true
+log.workspace = true
+env_logger.workspace = true
