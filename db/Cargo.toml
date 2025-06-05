@@ -7,7 +7,7 @@ license.workspace = true
 
 [dependencies]
 sqlx.workspace = true
-redis = { version = "0.24", features = ["tokio-comp"] }
+redis = { version = "0.31.0", features = ["tokio-comp"] }
 serde = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }

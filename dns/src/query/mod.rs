@@ -1,9 +1,9 @@
 use anyhow::Result;
 use futures::future::select_all;
 use haven_db::Database;
-use hickory_proto::op::Message;
+use hickory_proto::op::{Header, Message, Query};
 use hickory_proto::rr::{rdata, Name, RData, Record, RecordType};
-use hickory_proto::serialize::binary::BinEncodable;
+use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
 use reqwest::Client;
 use sqlx::Row;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
@@ -25,22 +25,20 @@ impl QueryHandler {
 
     pub async fn query_local(
         &self,
-        request: Message,
+        query: Query,
         database: &Database,
-    ) -> Result<Option<Message>> {
-        let query = request
-            .queries()
-            .first()
-            .ok_or(anyhow::anyhow!("No query found"))?;
+    ) -> Result<Option<Record<RData>>> {
         let domain = query.name().to_string();
         let record_type = query.query_type();
+
+        let mut result_record = None;
 
         // Only support A, AAAA, and CNAME records
         if !matches!(
             record_type,
             RecordType::A | RecordType::AAAA | RecordType::CNAME
         ) {
-            return Ok(None);
+            return Ok(result_record);
         }
 
         // Query the database
@@ -56,56 +54,53 @@ impl QueryHandler {
                 row.get::<Option<i32>, _>("ttl").unwrap_or_default(),
             )
         } else {
-            return Ok(None);
+            return Ok(result_record);
         };
-
-        // Create response message
-        let mut response = Message::new();
-        response.set_id(request.id());
-        response.set_message_type(hickory_proto::op::MessageType::Response);
-        response.set_op_code(request.op_code());
-        response.set_response_code(hickory_proto::op::ResponseCode::NoError);
-        response.add_query(query.clone());
 
         // Create DNS record based on type and value
         let name = query.name().clone();
 
         // Set the record data based on type
-        let data = match record_type {
+        match record_type {
             RecordType::A => {
                 if let Ok(ip) = record.parse::<Ipv4Addr>() {
-                    RData::A(rdata::A::from(ip))
-                } else {
-                    return Ok(None);
+                    let dns_record =
+                        Record::from_rdata(name, ttl as u32, RData::A(rdata::A::from(ip)));
+                    result_record = Some(dns_record);
                 }
             }
             RecordType::AAAA => {
                 if let Ok(ip) = record.parse::<Ipv6Addr>() {
-                    RData::AAAA(rdata::AAAA::from(ip))
-                } else {
-                    return Ok(None);
+                    let dns_record =
+                        Record::from_rdata(name, ttl as u32, RData::AAAA(rdata::AAAA::from(ip)));
+                    result_record = Some(dns_record);
                 }
             }
             RecordType::CNAME => {
                 if let Ok(name) = Name::from_utf8(&record) {
-                    RData::CNAME(rdata::CNAME(name))
-                } else {
-                    return Ok(None);
+                    let dns_record = Record::from_rdata(
+                        name.clone(),
+                        ttl as u32,
+                        RData::CNAME(rdata::CNAME(name.clone())),
+                    );
+                    result_record = Some(dns_record);
                 }
             }
-            _ => return Ok(None),
+            _ => {}
         };
 
-        let dns_record = Record::from_rdata(name, ttl as u32, data);
-
-        response.add_answer(dns_record);
-
-        log::debug!("Response: {:?}", response);
-
-        Ok(Some(response))
+        Ok(result_record)
     }
 
-    pub async fn query_upstreams(&self, request: Message) -> Result<Vec<u8>> {
+    pub async fn query_upstreams(
+        &self,
+        header: &Header,
+        query: &Query,
+    ) -> Result<Vec<Record<RData>>> {
+        let mut request = Message::new();
+        request.set_header(header.clone());
+        request.add_query(query.clone());
+
         // Create futures for UDP requests
         let mut udp_futures = Vec::new();
         for upstream in &self.udp_upstreams {
@@ -147,6 +142,47 @@ impl QueryHandler {
 
         let res = result??;
 
-        Ok(res)
+        let response = Message::from_bytes(&res)?;
+
+        Ok(response.answers().to_vec())
+    }
+
+    pub async fn query_cache(
+        &self,
+        _query: &Query,
+        _database: &Database,
+    ) -> Result<Option<Record<RData>>> {
+        Ok(None)
+    }
+
+    pub async fn do_query(
+        &self,
+        header: &Header,
+        query: &Query,
+        database: &Database,
+    ) -> Result<Vec<Record<RData>>> {
+        let mut records = vec![];
+
+        let query_type = query.query_type();
+        let name = query.name();
+        // if matches!(record_type, RecordType::A | RecordType::AAAA) {}
+
+        log::debug!("Query cache: {} {}", query_type, name);
+        if let Some(record) = self.query_cache(query, database).await? {
+            records.push(record);
+            return Ok(records);
+        }
+
+        log::debug!("Cache miss, Query local: {} {}", query_type, name);
+        if let Some(record) = self.query_local(query.clone(), database).await? {
+            records.push(record);
+            return Ok(records);
+        }
+
+        log::debug!("Cache miss, Query upstreams: {} {}", query_type, name);
+        let upstream_records = self.query_upstreams(header, query).await?;
+        records.extend(upstream_records);
+
+        Ok(records)
     }
 }

@@ -1,6 +1,6 @@
 use anyhow::Result;
 use haven_db::Database;
-use hickory_proto::op::Message;
+use hickory_proto::op::{Header, Message};
 use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
 use tokio::net::UdpSocket;
 
@@ -41,22 +41,24 @@ impl<'a> DNSServer<'a> {
         log::debug!("Received {} bytes from {}", size, src);
 
         let request = Message::from_bytes(&buf[..size])?;
+        log::trace!("Request: {:#?}", request);
 
-        // Try to resolve from local database first
-        if let Some(response) = self
-            .query_handler
-            .query_local(request.clone(), self.database)
-            .await?
-        {
-            self.listener.send_to(&response.to_bytes()?, src).await?;
-            return Ok(());
+        let mut response = Message::new();
+        response.set_header(Header::response_from_request(request.header()));
+
+        for query in request.queries() {
+            let records = self
+                .query_handler
+                .do_query(request.header(), &query, self.database)
+                .await?;
+
+            // response.add_query(query.clone());
+            response.add_answers(records);
         }
 
-        log::debug!("No local record found, querying upstream servers");
-
-        // Fall back to upstream servers if local resolution fails
-        let response = self.query_handler.query_upstreams(request).await?;
-        self.listener.send_to(&response, src).await?;
+        log::trace!("Response: {:#?}", response);
+        let response_bytes = response.to_bytes()?;
+        self.listener.send_to(&response_bytes, src).await?;
 
         Ok(())
     }
